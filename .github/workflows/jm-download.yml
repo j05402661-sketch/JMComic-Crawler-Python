@@ -12,11 +12,15 @@ on:
         required: false
         type: string
       client_impl:
-        description: '客户端：api（移动端，默认）/ html（网页端）'
+        description: '客户端：api（移动端）/ html（网页端）/ 其它同 jmcomic'
         required: false
-        default: api
-        type: choice
-        options: [api, html]
+        default: html
+        type: string
+      domain:
+        description: '站点域名（默认 18comic.vip；被 Cloudflare 拦时换一个）'
+        required: false
+        default: 18comic.vip
+        type: string
       zip_name:
         description: '打包文件名'
         required: false
@@ -44,6 +48,7 @@ jobs:
       - name: 生成配置
         env:
           IMPL: ${{ inputs.client_impl }}
+          DOMAIN: ${{ inputs.domain }}
         run: |
           cat > option.yml <<'YAML'
           dir_rule:
@@ -57,7 +62,7 @@ jobs:
                 photo: 4
           client:
             impl: __IMPL__
-            domain: 18comic.vip
+            domain: __DOMAIN__
             retry_times: 5
             cache: null
           plugins:
@@ -69,6 +74,7 @@ jobs:
                   zip_dir: ./download_zip
           YAML
           sed -i "s/__IMPL__/$IMPL/" option.yml
+          sed -i "s/__DOMAIN__/$DOMAIN/" option.yml
 
       - name: 下载
         env:
@@ -139,3 +145,4 @@ jobs:
           path: ${{ steps.pack.outputs.zip_name }}
           retention-days: 30
           if-no-files-found: warn
+
