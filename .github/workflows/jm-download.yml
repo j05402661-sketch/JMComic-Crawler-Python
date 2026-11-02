@@ -69,7 +69,6 @@ jobs:
                   zip_dir: ./download_zip
           YAML
           sed -i "s/__IMPL__/$IMPL/" option.yml
-          cat option.yml
 
       - name: 下载
         env:
@@ -77,7 +76,8 @@ jobs:
           PHOTO_IDS: ${{ inputs.photo_ids }}
         run: |
           python - <<'PY'
-          import os, subprocess, sys
+          import os, sys
+          import jmcomic
 
           def norm(raw, prefix=False):
               if not raw:
@@ -85,17 +85,34 @@ jobs:
               items = raw.replace('-', ' ').replace(',', ' ').split()
               return [('p' + x.lstrip('p')) if prefix else x.lstrip('p') for x in items]
 
-          ids = norm(os.environ.get('ALBUM_IDS', '')) + norm(os.environ.get('PHOTO_IDS', ''), prefix=True)
-          if not ids:
-              print('没有 id，退出')
+          albums = norm(os.environ.get('ALBUM_IDS', ''))
+          photos = norm(os.environ.get('PHOTO_IDS', ''), prefix=True)
+          print('本子:', albums, '章节:', photos)
+          if not albums and not photos:
+              print('没有 id')
               sys.exit(1)
-          print('目标:', ids)
-          cmd = [sys.executable, '-m', 'jmcomic', '--option', 'option.yml'] + ids
-          print('执行:', ' '.join(cmd))
-          r = subprocess.run(cmd, cwd=os.getcwd())
-          sys.exit(r.returncode)
+
+          option = jmcomic.JmOption.from_file('option.yml')
+          failed = []
+          for aid in albums:
+              try:
+                  jmcomic.download_album(aid, option)
+                  print('完成本子', aid)
+              except Exception as e:
+                  failed.append(('album', aid, repr(e)))
+                  print('失败本子', aid, repr(e))
+          for pid in photos:
+              try:
+                  jmcomic.download_photo(pid, option)
+                  print('完成章节', pid)
+              except Exception as e:
+                  failed.append(('photo', pid, repr(e)))
+                  print('失败章节', pid, repr(e))
+
+          if failed:
+              print('失败清单:', failed)
+              sys.exit(2)
           PY
-        continue-on-error: true
 
       - name: 打包
         id: pack
@@ -103,10 +120,10 @@ jobs:
           ZIP_NAME: ${{ inputs.zip_name }}
         run: |
           shopt -s nullglob
-          files=(./download/**/* ./download_zip/*)
+          files=(./download/* ./download/*/* ./download_zip/*)
+          echo "找到 ${#files[@]} 个条目"
           if [ ${#files[@]} -eq 0 ]; then
             echo "has_files=false" >> $GITHUB_OUTPUT
-            echo "下载目录为空"
             exit 0
           fi
           zip -r "$ZIP_NAME" ./download ./download_zip -x '*.DS_Store' > /dev/null
