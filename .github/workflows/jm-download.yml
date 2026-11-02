@@ -1,0 +1,124 @@
+name: JM 下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      album_ids:
+        description: '本子 id，多个用空格或 - 分隔（例：422866 422867）'
+        required: true
+        type: string
+      photo_ids:
+        description: '章节 id（可留空；多个同上，会自动加 p 前缀）'
+        required: false
+        type: string
+      client_impl:
+        description: '客户端：api（移动端，默认）/ html（网页端）'
+        required: false
+        default: api
+        type: choice
+        options: [api, html]
+      zip_name:
+        description: '打包文件名'
+        required: false
+        default: jm-download.zip
+        type: string
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装 jmcomic
+        run: |
+          python -m pip install --upgrade pip
+          pip install jmcomic rich
+
+      - name: 生成配置
+        env:
+          IMPL: ${{ inputs.client_impl }}
+        run: |
+          cat > option.yml <<'YAML'
+          dir_rule:
+            base_dir: ./download
+            rule: Bd_Aauthor_Btitle
+          download:
+            image:
+              batch_count: 4
+              threading:
+                image: 12
+                photo: 4
+          client:
+            impl: __IMPL__
+            domain: 18comic.vip
+            retry_times: 5
+            cache: null
+          plugins:
+            after_album:
+              - plugin: zip
+                kwargs:
+                  level: photo
+                  filename_rule: Atitle
+                  zip_dir: ./download_zip
+          YAML
+          sed -i "s/__IMPL__/$IMPL/" option.yml
+          cat option.yml
+
+      - name: 下载
+        env:
+          ALBUM_IDS: ${{ inputs.album_ids }}
+          PHOTO_IDS: ${{ inputs.photo_ids }}
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys
+
+          def norm(raw, prefix=False):
+              if not raw:
+                  return []
+              items = raw.replace('-', ' ').replace(',', ' ').split()
+              return [('p' + x.lstrip('p')) if prefix else x.lstrip('p') for x in items]
+
+          ids = norm(os.environ.get('ALBUM_IDS', '')) + norm(os.environ.get('PHOTO_IDS', ''), prefix=True)
+          if not ids:
+              print('没有 id，退出')
+              sys.exit(1)
+          print('目标:', ids)
+          cmd = [sys.executable, '-m', 'jmcomic', '--option', 'option.yml'] + ids
+          print('执行:', ' '.join(cmd))
+          r = subprocess.run(cmd, cwd=os.getcwd())
+          sys.exit(r.returncode)
+          PY
+        continue-on-error: true
+
+      - name: 打包
+        id: pack
+        env:
+          ZIP_NAME: ${{ inputs.zip_name }}
+        run: |
+          shopt -s nullglob
+          files=(./download/**/* ./download_zip/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "has_files=false" >> $GITHUB_OUTPUT
+            echo "下载目录为空"
+            exit 0
+          fi
+          zip -r "$ZIP_NAME" ./download ./download_zip -x '*.DS_Store' > /dev/null
+          ls -lh "$ZIP_NAME"
+          echo "has_files=true" >> $GITHUB_OUTPUT
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
+
+      - name: 上传产物
+        if: steps.pack.outputs.has_files == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.zip_name }}
+          path: ${{ steps.pack.outputs.zip_name }}
+          retention-days: 30
+          if-no-files-found: warn
